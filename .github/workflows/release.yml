@@ -1,6 +1,6 @@
 name: Release
 
-# Build Windows installers and publish a GitHub Release, either by pushing a tag like
+# Build Windows installers and Linux RPMs and publish a GitHub Release, either by pushing a tag like
 # v0.1.0, or from the Actions tab ("Run workflow") with a version: the release and its
 # tag are then created on the selected branch's commit.
 on:
@@ -65,9 +65,58 @@ jobs:
           name: installer-${{ matrix.arch }}
           path: dist-release/*.exe
 
+  linux-rpm:
+    name: Linux ${{ matrix.arch }} (RPM)
+    runs-on: ${{ matrix.runner }}
+    container: registry.fedoraproject.org/fedora:42
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Install build dependencies
+        run: |
+          dnf install -y git gcc gcc-c++ clang make perl file rpm-build webkit2gtk4.1-devel openssl-devel \
+            librsvg2-devel libxdo-devel nodejs npm
+      - uses: actions/checkout@v4
+      - name: Check the tag matches the app version
+        shell: bash
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          app=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          if [ "${tag#v}" != "$app" ]; then
+            echo "::error::Tag $tag doesn't match version $app in src-tauri/tauri.conf.json. Bump the version (package.json, tauri.conf.json, Cargo.toml) before releasing, or the app offers its own release as an update."
+            exit 1
+          fi
+          tr -d '\r' < .github/release-notes.md | grep -qxF "## New in ${tag#v}" || { echo "::error::.github/release-notes.md has no '## New in ${tag#v}' section."; exit 1; }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+            src-tauri/mcp-bridge
+          key: release-linux-${{ matrix.arch }}
+      - run: npm ci
+      - name: Build RPM
+        run: npx tauri build --bundles rpm
+      - name: Name RPM
+        shell: bash
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          mkdir -p dist-release
+          cp src-tauri/target/release/bundle/rpm/*.rpm "dist-release/Glance-$tag-linux-${{ matrix.arch }}.rpm"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm-${{ matrix.arch }}
+          path: dist-release/*.rpm
+
   publish:
     name: Publish release
-    needs: build
+    needs: [build, linux-rpm]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -76,7 +125,7 @@ jobs:
           path: dist-release
           merge-multiple: true
       - name: Checksums
-        run: cd dist-release && sha256sum *.exe > SHA256SUMS.txt && cat SHA256SUMS.txt
+        run: cd dist-release && sha256sum *.exe *.rpm > SHA256SUMS.txt && cat SHA256SUMS.txt
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
@@ -85,6 +134,7 @@ jobs:
           body_path: .github/release-notes.md
           files: |
             dist-release/*.exe
+            dist-release/*.rpm
             dist-release/SHA256SUMS.txt
 
   winget:

@@ -64,3 +64,7 @@ When the three values are set, the Release workflow also builds the Store bundle
 ### Testing a package locally
 
 CI packs an x64 MSIX with a test identity on every pull request (artifact `glance-windows-x64-msix`). To install it on your PC it must be signed with a certificate the PC trusts, or registered unpacked from a folder in Developer Mode: unzip the `.msix`, then `Add-AppxPackage -Register .\AppxManifest.xml`.
+
+## Linux RPM
+
+`.github/workflows/release.yml` builds `Glance-<tag>-linux-x86_64.rpm` and `-aarch64.rpm` in a Fedora 42 container with `npx tauri build --bundles rpm`, and adds them to the release and `SHA256SUMS.txt`. `src-tauri/tauri.linux.conf.json` (merged by Tauri on Linux) adds `/usr/bin/glance-mcp`, built by `scripts/mcp-bridge.mjs`, recommends `ghostscript`, and uses `src-tauri/linux/glance.desktop`, whose `MimeType=` line covers the file associations (`tests/packaging.test.ts` checks it). CI's `linux-rpm` job installs the package and runs `scripts/mcp-smoke.mjs` against `/usr/bin/glance-mcp`.
